@@ -1,0 +1,83 @@
+name: Deploy Belgian atlas
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-atlas.yml'
+      - 'site/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Prepare public site
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site/atlas
+
+          # The reviewed standalone atlas is staged in Google Drive because the
+          # generated HTML is ~40 MB and exceeds the practical write size of the
+          # ChatGPT GitHub connector. Keep the Drive file publicly readable.
+          ATLAS_ID='1mbl7lBDw33NMtmvjfd0dfh22gQ3Rw5jw'
+          curl -fL --retry 3 --retry-delay 2 \
+            "https://drive.usercontent.google.com/download?id=${ATLAS_ID}&export=download&confirm=t" \
+            -o _site/atlas/index.html
+
+          bytes=$(wc -c < _site/atlas/index.html)
+          if [ "$bytes" -lt 30000000 ]; then
+            echo "Downloaded atlas is unexpectedly small (${bytes} bytes)."
+            echo "Make sure the Drive file is shared as: Anyone with the link — Viewer."
+            exit 1
+          fi
+
+          grep -q 'Belgian Job' _site/atlas/index.html
+          grep -q 'window.__ATLAS_DATA__' _site/atlas/index.html
+
+          cat > _site/index.html <<'EOF'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <meta http-equiv="refresh" content="0; url=./atlas/">
+            <link rel="canonical" href="./atlas/">
+            <title>Belgian Job–Home Network | Junyao He</title>
+          </head>
+          <body>
+            <p>Opening the <a href="./atlas/">Belgian Job–Home Network Atlas</a>…</p>
+          </body>
+          </html>
+          EOF
+
+          touch _site/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
