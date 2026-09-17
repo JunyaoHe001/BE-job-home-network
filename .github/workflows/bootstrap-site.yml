@@ -1,0 +1,74 @@
+name: Bootstrap and deploy Belgian atlas
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bootstrap-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  bootstrap-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download reviewed deployment package
+        shell: bash
+        env:
+          PACKAGE_URL: 'https://sdmntprnortheu.oaiusercontent.com/files/00000000-7538-81f4-8b0a-41a40c9bf63e/raw?se=2026-09-17T11%3A56%3A04Z&sp=r&sv=2026-02-06&sr=b&scid=0edd9be8-3cc9-521b-b739-b31e0141fd5f&skoid=7b771594-2b4f-4e93-93be-fdeeeb59aaf9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-17T07%3A50%3A59Z&ske=2026-09-18T07%3A50%3A59Z&sks=b&skv=2026-02-06&sig=49LHygUv9o87nifcF4DwiJi/tArcoFmMVY0nWSjnERM%3D'
+          PACKAGE_SHA256: '1e6e85b65acd3eab1cda9198df59c46c12e3c2a8929ae51ebad79ac77ff45df3'
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 "$PACKAGE_URL" -o deploy.zip
+          echo "$PACKAGE_SHA256  deploy.zip" | sha256sum -c -
+
+          rm -rf site
+          unzip -q deploy.zip
+          touch site/.nojekyll
+
+          test -f site/index.html
+          test -f site/atlas/index.html
+          test "$(wc -c < site/atlas/index.html)" -eq 40016115
+          echo '31e12f3b3c2a10e01af0c952e6b3f31c6478272f53f95846097dfd1927152ed6  site/atlas/index.html' | sha256sum -c -
+          grep -q 'Belgian Job' site/atlas/index.html
+          grep -q 'window.__ATLAS_DATA__' site/atlas/index.html
+
+      - name: Commit published site to repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add site
+          if git diff --cached --quiet; then
+            echo 'Site files already match the reviewed deployment package.'
+          else
+            git commit -m 'Publish Belgian job-home network atlas'
+            git push origin HEAD:main
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
